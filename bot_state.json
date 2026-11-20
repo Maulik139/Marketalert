@@ -2,14 +2,6 @@
   "date": "2026-11-20",
   "live_sent": true,
   "active_trades": {
-    "NIFTY": {
-      "side": "PUT",
-      "strike": "25750 PE",
-      "entry_spot": 25733.6,
-      "target_spot": 25623.6,
-      "sl_spot": 25788.6,
-      "opened_at": 1795159257.34664
-    },
     "SENSEX": {
       "side": "PUT",
       "strike": "83900 PE",
@@ -21,6 +13,7 @@
     }
   },
   "cooldown_until": {
-    "SENSEX": 1795164938.388325
+    "SENSEX": 1795164938.388325,
+    "NIFTY": 1795167455.4599836
   }
 }
