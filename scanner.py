@@ -251,7 +251,7 @@ def main():
     active = state.setdefault("active_trades", {})
     cooldown = state.setdefault("cooldown_until", {})
 
-    # 2. Check active trades: Dynamic Trailing Target & OI-based Exit
+    # 2. Check active trades: Instant OI Reversal Exit & Dynamic Trailing Target
     for key in list(active.keys()):
         tr = active.get(key)
         if not isinstance(tr, dict):
@@ -266,7 +266,6 @@ def main():
         tgt = tr["target_spot"]
         sl = tr["sl_spot"]
         level = tr.get("trail_level", 0)
-        opened_at = tr.get("opened_at", now_ts)
         pts = round(spot - entry if side == "CALL" else entry - spot, 1)
 
         closed = False
@@ -286,19 +285,18 @@ def main():
                 )
             closed = True
 
-        # B. Check if OI completely reversed after 10 mins (Exhaustion Exit)
-        elif (now_ts - opened_at) >= 600 and res["oi_bias"] != "NEUTRAL" and res["oi_bias"] != side:
+        # B. Instant Exit if OI reverses direction before SL is hit
+        elif res["oi_bias"] != "NEUTRAL" and res["oi_bias"] != side:
             send_tg(
                 f"⚠️ OI REVERSAL EXIT — {cfg['name']} {side}\n"
                 f"Strike: {tr['strike']} | Spot: {round(spot, 2)} ({'+' if pts >= 0 else ''}{pts} pts)\n"
-                f"📉 OI support exhausted — book profit / exit now!"
+                f"📉 OI reversed before SL — exit immediately!"
             )
             closed = True
 
         # C. Check if Target Milestone is reached -> Extend Target & Trail SL!
         elif (side == "CALL" and spot >= tgt) or (side == "PUT" and spot <= tgt):
             if res["oi_bias"] != "NEUTRAL" and res["oi_bias"] != side:
-                # Target reached AND OI no longer supports further upmove -> Book full profit!
                 send_tg(
                     f"🎯 TARGET HIT & OI EXHAUSTED — Exit {cfg['name']} {side}\n"
                     f"Strike: {tr['strike']} | Spot: {round(spot, 2)} (+{abs(pts)} pts)\n"
@@ -306,7 +304,6 @@ def main():
                 )
                 closed = True
             else:
-                # OI still supports the trend -> Extend target & move SL up!
                 new_level = level + 1
                 step_pts = cfg["trail_step"]
                 if side == "CALL":
