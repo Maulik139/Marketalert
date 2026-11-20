@@ -1,1 +1,1 @@
-{"date": "2026-11-20", "started": true, "closed": false, "open_spots": {"NIFTY": 25368.0, "SENSEX": 82558.25}, "active_trades": {"NIFTY": null, "SENSEX": null}, "cooldown_until": {"NIFTY": 0, "SENSEX": 0}}
+{"date": "2026-11-20", "started": true, "closed": false, "open_spots": {"NIFTY": 25368.0, "SENSEX": 82558.25}, "active_trades": {"NIFTY": null, "SENSEX": {"side": "CALL", "s1": "83000 CE", "entry": 83030.35, "sl": 82910.4, "target": 83270.4, "sl_pts": 120.0, "tgt_pts": 240.0, "opened_at": 1795149815.5869272}}, "cooldown_until": {"NIFTY": 0, "SENSEX": 0}}
