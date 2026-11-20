@@ -9,15 +9,9 @@
       "target_spot": 25623.6,
       "sl_spot": 25788.6,
       "opened_at": 1795159257.34664
-    },
-    "SENSEX": {
-      "side": "PUT",
-      "strike": "83800 PE",
-      "entry_spot": 83784.34,
-      "target_spot": 83544.3,
-      "sl_spot": 83904.3,
-      "opened_at": 1795159257.34664
     }
   },
-  "cooldown_until": {}
+  "cooldown_until": {
+    "SENSEX": 1795164938.388325
+  }
 }
