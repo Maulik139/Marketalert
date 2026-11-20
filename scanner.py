@@ -25,7 +25,8 @@ INDICES = {
         "token": "99926000",
         "step": 50,
         "target": 110.0,
-        "sl": 55.0
+        "sl": 55.0,
+        "trail_step": 75.0
     },
     "SENSEX": {
         "name": "SENSEX",
@@ -35,7 +36,8 @@ INDICES = {
         "token": "99919000",
         "step": 100,
         "target": 240.0,
-        "sl": 120.0
+        "sl": 120.0,
+        "trail_step": 175.0
     }
 }
 
@@ -61,7 +63,15 @@ def load_state():
         try:
             with open(STATE_FILE, "r") as f:
                 data = json.load(f)
-            if data.get("date") == today_str:
+            if isinstance(data, dict) and data.get("date") == today_str:
+                if not isinstance(data.get("active_trades"), dict):
+                    data["active_trades"] = {}
+                else:
+                    data["active_trades"] = {
+                        k: v for k, v in data["active_trades"].items() if isinstance(v, dict)
+                    }
+                if not isinstance(data.get("cooldown_until"), dict):
+                    data["cooldown_until"] = {}
                 return data
         except Exception:
             pass
@@ -120,7 +130,7 @@ def analyze_index(obj, scrips, key, cfg, vix):
     atm = round(spot / step) * step
     exp_dt, exp_str = get_nearest_expiry(scrips, key)
     if not exp_dt:
-        return {"spot": spot, "signal": None}
+        return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
 
     strikes = [atm + i * step for i in range(-3, 4)]
     target_tokens = {}
@@ -137,7 +147,7 @@ def analyze_index(obj, scrips, key, cfg, vix):
                     target_tokens[s["token"]] = {"strike": st, "type": otype, "symbol": sym}
 
     if not target_tokens:
-        return {"spot": spot, "signal": None}
+        return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
 
     tokens_list = list(target_tokens.keys())
     try:
@@ -145,7 +155,7 @@ def analyze_index(obj, scrips, key, cfg, vix):
         fetched = mkt.get("data", {}).get("fetched", [])
     except Exception as e:
         print(f"MarketData error {key}:", e)
-        return {"spot": spot, "signal": None}
+        return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
 
     ce_oi_chg = 0
     pe_oi_chg = 0
@@ -172,12 +182,14 @@ def analyze_index(obj, scrips, key, cfg, vix):
     iv = max(vix / 100.0, 0.12)
 
     signal = None
+    oi_bias = "NEUTRAL"
     reason = ""
     strike_1 = atm
     strike_2 = atm
 
-    # Bullish: Put writers active (PE OI rising faster than CE OI) + PCR support
+    # Bullish OI check
     if (pe_oi_chg > ce_oi_chg * 1.15 and pe_oi_chg > 0) or (pcr >= 1.05 and pe_oi_chg >= ce_oi_chg):
+        oi_bias = "CALL"
         delta_val = abs(calc_delta(spot, atm, t_years, iv, "CE"))
         if delta_val >= 0.45:
             signal = "CALL"
@@ -185,8 +197,9 @@ def analyze_index(obj, scrips, key, cfg, vix):
             strike_2 = atm - step
             reason = "Bullish OI support & Greeks favor fast CALL premium growth."
 
-    # Bearish: Call writers active (CE OI rising faster than PE OI) + PCR weak
+    # Bearish OI check
     elif (ce_oi_chg > pe_oi_chg * 1.15 and ce_oi_chg > 0) or (pcr <= 0.85 and ce_oi_chg >= pe_oi_chg):
+        oi_bias = "PUT"
         delta_val = abs(calc_delta(spot, atm, t_years, iv, "PE"))
         if delta_val >= 0.45:
             signal = "PUT"
@@ -197,6 +210,7 @@ def analyze_index(obj, scrips, key, cfg, vix):
     return {
         "spot": spot,
         "signal": signal,
+        "oi_bias": oi_bias,
         "strike_1": strike_1,
         "strike_2": strike_2,
         "reason": reason,
@@ -215,7 +229,6 @@ def main():
     state = load_state()
     obj = login_angel()
 
-    # Fetch India VIX
     try:
         vix_res = obj.ltpData("NSE", "INDIA VIX", "99926017")
         vix = float(vix_res["data"]["ltp"])
@@ -238,42 +251,86 @@ def main():
     active = state.setdefault("active_trades", {})
     cooldown = state.setdefault("cooldown_until", {})
 
-    # 2. Check active trades for Target / SL / Momentum Shift
+    # 2. Check active trades: Dynamic Trailing Target & OI-based Exit
     for key in list(active.keys()):
-        tr = active[key]
+        tr = active.get(key)
+        if not isinstance(tr, dict):
+            del active[key]
+            continue
+
+        cfg = INDICES[key]
         res = results[key]
         spot = res["spot"]
         side = tr["side"]
         entry = tr["entry_spot"]
         tgt = tr["target_spot"]
         sl = tr["sl_spot"]
+        level = tr.get("trail_level", 0)
         opened_at = tr.get("opened_at", now_ts)
         pts = round(spot - entry if side == "CALL" else entry - spot, 1)
 
         closed = False
-        if (side == "CALL" and spot >= tgt) or (side == "PUT" and spot <= tgt):
-            send_tg(
-                f"🎯 TARGET HIT — {INDICES[key]['name']} {side}\n"
-                f"Strike: {tr['strike']} | Spot: {round(spot, 2)} (+{abs(pts)} pts)"
-            )
+
+        # A. Check if SL or Trailing SL is hit
+        if (side == "CALL" and spot <= sl) or (side == "PUT" and spot >= sl):
+            if level == 0:
+                send_tg(
+                    f"🛑 SL HIT — {cfg['name']} {side}\n"
+                    f"Strike: {tr['strike']} | Spot: {round(spot, 2)} ({pts} pts)"
+                )
+            else:
+                send_tg(
+                    f"🏁 FINAL EXIT (Trailing SL Hit) — {cfg['name']} {side}\n"
+                    f"Strike: {tr['strike']} | Spot: {round(spot, 2)}\n"
+                    f"💰 Locked Profit: {'+' if pts >= 0 else ''}{pts} pts"
+                )
             closed = True
-        elif (side == "CALL" and spot <= sl) or (side == "PUT" and spot >= sl):
+
+        # B. Check if OI completely reversed after 10 mins (Exhaustion Exit)
+        elif (now_ts - opened_at) >= 600 and res["oi_bias"] != "NEUTRAL" and res["oi_bias"] != side:
             send_tg(
-                f"🛑 SL HIT — {INDICES[key]['name']} {side}\n"
-                f"Strike: {tr['strike']} | Spot: {round(spot, 2)} (-{abs(pts)} pts)"
-            )
-            closed = True
-        elif (now_ts - opened_at) >= 900 and res["signal"] and res["signal"] != side:
-            send_tg(
-                f"⚠️ MOMENTUM SHIFT — Exit {INDICES[key]['name']} {side}\n"
+                f"⚠️ OI REVERSAL EXIT — {cfg['name']} {side}\n"
                 f"Strike: {tr['strike']} | Spot: {round(spot, 2)} ({'+' if pts >= 0 else ''}{pts} pts)\n"
-                f"OI & Greeks reversed direction."
+                f"📉 OI support exhausted — book profit / exit now!"
             )
             closed = True
 
+        # C. Check if Target Milestone is reached -> Extend Target & Trail SL!
+        elif (side == "CALL" and spot >= tgt) or (side == "PUT" and spot <= tgt):
+            if res["oi_bias"] != "NEUTRAL" and res["oi_bias"] != side:
+                # Target reached AND OI no longer supports further upmove -> Book full profit!
+                send_tg(
+                    f"🎯 TARGET HIT & OI EXHAUSTED — Exit {cfg['name']} {side}\n"
+                    f"Strike: {tr['strike']} | Spot: {round(spot, 2)} (+{abs(pts)} pts)\n"
+                    f"💰 Book full profit now!"
+                )
+                closed = True
+            else:
+                # OI still supports the trend -> Extend target & move SL up!
+                new_level = level + 1
+                step_pts = cfg["trail_step"]
+                if side == "CALL":
+                    new_tgt = round(spot + step_pts, 1)
+                    new_sl = round(entry, 1) if new_level == 1 else round(spot - step_pts, 1)
+                else:
+                    new_tgt = round(spot - step_pts, 1)
+                    new_sl = round(entry, 1) if new_level == 1 else round(spot + step_pts, 1)
+
+                tr["trail_level"] = new_level
+                tr["target_spot"] = new_tgt
+                tr["sl_spot"] = new_sl
+
+                sl_note = "Entry/Cost (Risk-Free!)" if new_level == 1 else f"{new_sl} (Profit Locked!)"
+                send_tg(
+                    f"🔥 TARGET {new_level} HIT — {cfg['name']} {side} (+{abs(pts)} pts)\n"
+                    f"Spot: {round(spot, 2)} | OI still {side} supportive!\n"
+                    f"🚀 Extended Target {new_level + 1}: {new_tgt}\n"
+                    f"🛡️ Trailing SL moved to: {sl_note}"
+                )
+
         if closed:
             del active[key]
-            cooldown[key] = now_ts + 180  # 3-minute cooldown
+            cooldown[key] = now_ts + 180
 
     # 3. Stop taking fresh entries after 3:05 PM IST
     if mins >= (15 * 60 + 5):
@@ -308,8 +365,8 @@ def main():
             f"🟢 {cfg['name']} — BUY {sig}\n"
             f"Spot: {round(spot, 2)}\n"
             f"👉 Strike: {strike_str} (or {alt_str})\n"
-            f"🎯 Spot Target: {tgt_spot} (+{cfg['target']} pts)\n"
-            f"🛑 Spot SL: {sl_spot} (-{cfg['sl']} pts)\n"
+            f"🎯 Target 1: {tgt_spot} (+{cfg['target']} pts)\n"
+            f"🛑 Initial SL: {sl_spot} (-{cfg['sl']} pts)\n"
             f"💡 {res['reason']}"
         )
         send_tg(msg)
@@ -320,6 +377,7 @@ def main():
             "entry_spot": spot,
             "target_spot": tgt_spot,
             "sl_spot": sl_spot,
+            "trail_level": 0,
             "opened_at": now_ts
         }
 
