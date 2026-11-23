@@ -6,18 +6,18 @@
       "side": "PUT",
       "strike": "25950 PE",
       "entry_spot": 25929.15,
-      "target_spot": 25819.2,
-      "sl_spot": 25984.2,
-      "trail_level": 0,
+      "target_spot": 25706.8,
+      "sl_spot": 25929.2,
+      "trail_level": 1,
       "opened_at": 1795405476.5710185
     },
     "SENSEX": {
       "side": "PUT",
       "strike": "84400 PE",
       "entry_spot": 84421.97,
-      "target_spot": 83974.1,
-      "sl_spot": 84422.0,
-      "trail_level": 1,
+      "target_spot": 83755.1,
+      "sl_spot": 84105.1,
+      "trail_level": 2,
       "opened_at": 1795405476.5710185
     }
   },
