@@ -187,25 +187,25 @@ def analyze_index(obj, scrips, key, cfg, vix):
     strike_1 = atm
     strike_2 = atm
 
-    # Bullish OI check
-    if (pe_oi_chg > ce_oi_chg * 1.15 and pe_oi_chg > 0) or (pcr >= 1.05 and pe_oi_chg >= ce_oi_chg):
+    # Strict Fresh Bullish OI: Intraday Put writing MUST dominate Call writing (no stale PCR trap)
+    if pe_oi_chg > 0 and pe_oi_chg > ce_oi_chg * 1.20 and pcr >= 0.90:
         oi_bias = "CALL"
         delta_val = abs(calc_delta(spot, atm, t_years, iv, "CE"))
         if delta_val >= 0.45:
             signal = "CALL"
             strike_1 = atm
             strike_2 = atm - step
-            reason = "Bullish OI support & Greeks favor fast CALL premium growth."
+            reason = "Strong fresh Put writing & Greeks favor fast CALL growth."
 
-    # Bearish OI check
-    elif (ce_oi_chg > pe_oi_chg * 1.15 and ce_oi_chg > 0) or (pcr <= 0.85 and ce_oi_chg >= pe_oi_chg):
+    # Strict Fresh Bearish OI: Intraday Call writing MUST dominate Put writing
+    elif ce_oi_chg > 0 and ce_oi_chg > pe_oi_chg * 1.20 and pcr <= 1.10:
         oi_bias = "PUT"
         delta_val = abs(calc_delta(spot, atm, t_years, iv, "PE"))
         if delta_val >= 0.45:
             signal = "PUT"
             strike_1 = atm
             strike_2 = atm + step
-            reason = "Bearish OI resistance & Greeks favor fast PUT premium growth."
+            reason = "Strong fresh Call writing & Greeks favor fast PUT growth."
 
     return {
         "spot": spot,
@@ -327,7 +327,7 @@ def main():
 
         if closed:
             del active[key]
-            cooldown[key] = now_ts + 180
+            cooldown[key] = now_ts + 360  # 6-minute cooldown after exit to avoid whipsaws
 
     # 3. Stop taking fresh entries after 3:05 PM IST
     if mins >= (15 * 60 + 5):
