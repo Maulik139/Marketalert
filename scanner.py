@@ -26,7 +26,8 @@ INDICES = {
         "step": 50,
         "target": 110.0,
         "sl": 55.0,
-        "trail_step": 75.0
+        "trail_step": 75.0,
+        "min_oi_diff": 250000
     },
     "SENSEX": {
         "name": "SENSEX",
@@ -37,7 +38,8 @@ INDICES = {
         "step": 100,
         "target": 240.0,
         "sl": 120.0,
-        "trail_step": 175.0
+        "trail_step": 175.0,
+        "min_oi_diff": 50000
     }
 }
 
@@ -132,7 +134,8 @@ def analyze_index(obj, scrips, key, cfg, vix):
     if not exp_dt:
         return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
 
-    strikes = [atm + i * step for i in range(-3, 4)]
+    # Focus on ATM +/- 2 strikes (highest liquidity & sharpest OI reaction)
+    strikes = [atm + i * step for i in range(-2, 3)]
     target_tokens = {}
     for s in scrips:
         if s.get("name") == key and s.get("expiry") == exp_str and s.get("instrumenttype") == "OPTIDX":
@@ -157,10 +160,12 @@ def analyze_index(obj, scrips, key, cfg, vix):
         print(f"MarketData error {key}:", e)
         return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
 
-    ce_oi_chg = 0
-    pe_oi_chg = 0
-    ce_oi_tot = 0
-    pe_oi_tot = 0
+    ce_oi_chg = 0.0
+    pe_oi_chg = 0.0
+    ce_oi_tot = 0.0
+    pe_oi_tot = 0.0
+    atm_ce_gain = False
+    atm_pe_gain = False
 
     for item in fetched:
         tok = str(item.get("symbolToken"))
@@ -169,17 +174,29 @@ def analyze_index(obj, scrips, key, cfg, vix):
             continue
         oi = float(item.get("opnInterest", 0) or 0)
         chg = float(item.get("netChangeOpnInterest", 0) or 0)
+        ltp = float(item.get("ltp", 0) or 0)
+        opn = float(item.get("open", 0) or 0)
+
         if info["type"] == "CE":
             ce_oi_tot += oi
             ce_oi_chg += chg
+            if info["strike"] == atm and opn > 0 and ltp > opn:
+                atm_ce_gain = True
         else:
             pe_oi_tot += oi
             pe_oi_chg += chg
+            if info["strike"] == atm and opn > 0 and ltp > opn:
+                atm_pe_gain = True
 
     pcr = (pe_oi_tot / ce_oi_tot) if ce_oi_tot > 0 else 1.0
     days_left = max((exp_dt - ist_now().date()).days, 0) + 0.5
     t_years = days_left / 365.0
     iv = max(vix / 100.0, 0.12)
+
+    # Pure OI Pressure = Writing on one side + Unwinding on the opposite side
+    bullish_oi_net = pe_oi_chg - ce_oi_chg
+    bearish_oi_net = ce_oi_chg - pe_oi_chg
+    min_diff = cfg["min_oi_diff"]
 
     signal = None
     oi_bias = "NEUTRAL"
@@ -187,25 +204,25 @@ def analyze_index(obj, scrips, key, cfg, vix):
     strike_1 = atm
     strike_2 = atm
 
-    # Strict Fresh Bullish OI: Intraday Put writing MUST dominate Call writing (no stale PCR trap)
-    if pe_oi_chg > 0 and pe_oi_chg > ce_oi_chg * 1.20 and pcr >= 0.90:
+    # 1. Pure Bullish OI (Put Writing + Call Unwinding) + Strong CE Delta
+    if bullish_oi_net >= min_diff and (pe_oi_chg > 0 or ce_oi_chg < 0):
         oi_bias = "CALL"
-        delta_val = abs(calc_delta(spot, atm, t_years, iv, "CE"))
-        if delta_val >= 0.45:
+        ce_delta = abs(calc_delta(spot, atm, t_years, iv, "CE"))
+        if ce_delta >= 0.48 and atm_ce_gain:
             signal = "CALL"
             strike_1 = atm
             strike_2 = atm - step
-            reason = "Strong fresh Put writing & Greeks favor fast CALL growth."
+            reason = f"Put writing + Call unwinding (Net +{int(bullish_oi_net/1000)}K OI) & Delta {round(ce_delta, 2)} favor fast CALL growth."
 
-    # Strict Fresh Bearish OI: Intraday Call writing MUST dominate Put writing
-    elif ce_oi_chg > 0 and ce_oi_chg > pe_oi_chg * 1.20 and pcr <= 1.10:
+    # 2. Pure Bearish OI (Call Writing + Put Unwinding) + Strong PE Delta
+    elif bearish_oi_net >= min_diff and (ce_oi_chg > 0 or pe_oi_chg < 0):
         oi_bias = "PUT"
-        delta_val = abs(calc_delta(spot, atm, t_years, iv, "PE"))
-        if delta_val >= 0.45:
+        pe_delta = abs(calc_delta(spot, atm, t_years, iv, "PE"))
+        if pe_delta >= 0.48 and atm_pe_gain:
             signal = "PUT"
             strike_1 = atm
             strike_2 = atm + step
-            reason = "Strong fresh Call writing & Greeks favor fast PUT growth."
+            reason = f"Call writing + Put unwinding (Net +{int(bearish_oi_net/1000)}K OI) & Delta {round(pe_delta, 2)} favor fast PUT growth."
 
     return {
         "spot": spot,
@@ -327,7 +344,7 @@ def main():
 
         if closed:
             del active[key]
-            cooldown[key] = now_ts + 360  # 6-minute cooldown after exit to avoid whipsaws
+            cooldown[key] = now_ts + 360
 
     # 3. Stop taking fresh entries after 3:05 PM IST
     if mins >= (15 * 60 + 5):
