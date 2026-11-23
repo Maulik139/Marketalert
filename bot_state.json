@@ -15,9 +15,9 @@
       "side": "PUT",
       "strike": "84400 PE",
       "entry_spot": 84421.97,
-      "target_spot": 84182.0,
-      "sl_spot": 84542.0,
-      "trail_level": 0,
+      "target_spot": 83974.1,
+      "sl_spot": 84422.0,
+      "trail_level": 1,
       "opened_at": 1795405476.5710185
     }
   },
