@@ -1,19 +1,9 @@
 {
   "date": "2026-11-23",
   "live_sent": true,
-  "active_trades": {
-    "NIFTY": {
-      "side": "CALL",
-      "strike": "25650 CE",
-      "entry_spot": 25643.2,
-      "target_spot": 25753.2,
-      "sl_spot": 25588.2,
-      "trail_level": 0,
-      "opened_at": 1795406553.8223183
-    }
-  },
+  "active_trades": {},
   "cooldown_until": {
     "SENSEX": 1795406733.8223183,
-    "NIFTY": 1795406496.1446173
+    "NIFTY": 1795406853.464197
   }
 }
