@@ -1,9 +1,6 @@
 {
-  "date": "2026-11-23",
+  "date": "2026-11-24",
   "live_sent": true,
   "active_trades": {},
-  "cooldown_until": {
-    "SENSEX": 1795408633.737644,
-    "NIFTY": 1795407234.912503
-  }
+  "cooldown_until": {}
 }
