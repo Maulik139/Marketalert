@@ -185,7 +185,6 @@ def analyze_index(obj, scrips, key, cfg, vix):
     t_years = days_left / 365.0
     iv = max(vix / 100.0, 0.12)
 
-    # Universal Percentage-Based Net OI Pressure (Works in Gap-Up, Gap-Down & Normal days)
     bullish_oi_net = pe_oi_chg - ce_oi_chg
     bearish_oi_net = ce_oi_chg - pe_oi_chg
     bullish_pct = (bullish_oi_net / total_oi) * 100.0
@@ -197,8 +196,8 @@ def analyze_index(obj, scrips, key, cfg, vix):
     strike_1 = atm
     strike_2 = atm
 
-    # 1. Bullish OI Dominance (>= 5% of total ATM zone OI) + Strong CE Delta
-    if bullish_pct >= 5.0 and (pe_oi_chg > 0 or ce_oi_chg < 0):
+    # 1. Bullish OI Dominance (>= 1.5% of total ATM zone OI) + Strong CE Delta
+    if bullish_pct >= 1.5 and (pe_oi_chg > 0 or ce_oi_chg < 0):
         oi_bias = "CALL"
         ce_delta = abs(calc_delta(spot, atm, t_years, iv, "CE"))
         if ce_delta >= 0.45:
@@ -207,8 +206,8 @@ def analyze_index(obj, scrips, key, cfg, vix):
             strike_2 = atm - step
             reason = f"Bullish OI dominance (+{round(bullish_pct, 1)}% Net OI) & Delta {round(ce_delta, 2)} favor fast CALL growth."
 
-    # 2. Bearish OI Dominance (>= 5% of total ATM zone OI) + Strong PE Delta
-    elif bearish_pct >= 5.0 and (ce_oi_chg > 0 or pe_oi_chg < 0):
+    # 2. Bearish OI Dominance (>= 1.5% of total ATM zone OI) + Strong PE Delta
+    elif bearish_pct >= 1.5 and (ce_oi_chg > 0 or pe_oi_chg < 0):
         oi_bias = "PUT"
         pe_delta = abs(calc_delta(spot, atm, t_years, iv, "PE"))
         if pe_delta >= 0.45:
