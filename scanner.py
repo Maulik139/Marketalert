@@ -57,7 +57,8 @@ def load_state():
         "date": today_str,
         "live_sent": False,
         "active_trades": {},
-        "cooldown_until": {}
+        "cooldown_until": {},
+        "prev_oi": {}
     }
     if os.path.exists(STATE_FILE):
         try:
@@ -72,6 +73,8 @@ def load_state():
                     }
                 if not isinstance(data.get("cooldown_until"), dict):
                     data["cooldown_until"] = {}
+                if not isinstance(data.get("prev_oi"), dict):
+                    data["prev_oi"] = {}
                 return data
         except Exception:
             pass
@@ -124,7 +127,7 @@ def get_nearest_expiry(scrips, name):
         return None, None
     return sorted(expiries, key=lambda x: x[0])[0]
 
-def analyze_index(obj, scrips, key, cfg, vix):
+def analyze_index(obj, scrips, key, cfg, vix, prev_oi_store):
     spot = get_spot(obj, cfg)
     step = cfg["step"]
     atm = round(spot / step) * step
@@ -157,10 +160,10 @@ def analyze_index(obj, scrips, key, cfg, vix):
         print(f"MarketData error {key}:", e)
         return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
 
-    ce_oi_chg = 0.0
-    pe_oi_chg = 0.0
     ce_oi_tot = 0.0
     pe_oi_tot = 0.0
+    ce_oi_chg_api = 0.0
+    pe_oi_chg_api = 0.0
 
     for item in fetched:
         tok = str(item.get("symbolToken"))
@@ -172,15 +175,28 @@ def analyze_index(obj, scrips, key, cfg, vix):
 
         if info["type"] == "CE":
             ce_oi_tot += oi
-            ce_oi_chg += chg
+            ce_oi_chg_api += chg
         else:
             pe_oi_tot += oi
-            pe_oi_chg += chg
+            pe_oi_chg_api += chg
 
     total_oi = ce_oi_tot + pe_oi_tot
     if total_oi <= 0:
+        print(f"{key}: Total OI is 0 from API")
         return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
 
+    # Fallback to real-time snapshot diff if Angel API returns 0 for netChangeOpnInterest
+    prev = prev_oi_store.get(key, {})
+    if ce_oi_chg_api == 0 and pe_oi_chg_api == 0 and prev.get("atm") == atm:
+        ce_oi_chg = ce_oi_tot - float(prev.get("ce_tot", ce_oi_tot))
+        pe_oi_chg = pe_oi_tot - float(prev.get("pe_tot", pe_oi_tot))
+    else:
+        ce_oi_chg = ce_oi_chg_api
+        pe_oi_chg = pe_oi_chg_api
+
+    prev_oi_store[key] = {"atm": atm, "ce_tot": ce_oi_tot, "pe_tot": pe_oi_tot}
+
+    pcr = pe_oi_tot / ce_oi_tot if ce_oi_tot > 0 else 1.0
     days_left = max((exp_dt - ist_now().date()).days, 0) + 0.5
     t_years = days_left / 365.0
     iv = max(vix / 100.0, 0.12)
@@ -190,31 +206,33 @@ def analyze_index(obj, scrips, key, cfg, vix):
     bullish_pct = (bullish_oi_net / total_oi) * 100.0
     bearish_pct = (bearish_oi_net / total_oi) * 100.0
 
+    print(f"{key} | Spot: {spot} | PCR: {round(pcr, 2)} | BullNet%: {round(bullish_pct, 2)}% | BearNet%: {round(bearish_pct, 2)}%")
+
     signal = None
     oi_bias = "NEUTRAL"
     reason = ""
     strike_1 = atm
     strike_2 = atm
 
-    # 1. Bullish OI Dominance (>= 1.5% of total ATM zone OI) + Strong CE Delta
-    if bullish_pct >= 1.5 and (pe_oi_chg > 0 or ce_oi_chg < 0):
+    # 1. Bullish OI: Either strong intraday Put Writing/Call Unwinding (>= 1.2%) OR dominant Live PCR (>= 1.25)
+    if (bullish_pct >= 1.2) or (pcr >= 1.25 and bullish_pct >= 0.3):
         oi_bias = "CALL"
         ce_delta = abs(calc_delta(spot, atm, t_years, iv, "CE"))
         if ce_delta >= 0.45:
             signal = "CALL"
             strike_1 = atm
             strike_2 = atm - step
-            reason = f"Bullish OI dominance (+{round(bullish_pct, 1)}% Net OI) & Delta {round(ce_delta, 2)} favor fast CALL growth."
+            reason = f"Bullish OI (PCR {round(pcr, 2)}, Net +{round(bullish_pct, 1)}% OI) & Delta {round(ce_delta, 2)} favor fast CALL growth."
 
-    # 2. Bearish OI Dominance (>= 1.5% of total ATM zone OI) + Strong PE Delta
-    elif bearish_pct >= 1.5 and (ce_oi_chg > 0 or pe_oi_chg < 0):
+    # 2. Bearish OI: Either strong intraday Call Writing/Put Unwinding (>= 1.2%) OR dominant Live PCR (<= 0.78)
+    elif (bearish_pct >= 1.2) or (pcr <= 0.78 and bearish_pct >= 0.3):
         oi_bias = "PUT"
         pe_delta = abs(calc_delta(spot, atm, t_years, iv, "PE"))
         if pe_delta >= 0.45:
             signal = "PUT"
             strike_1 = atm
             strike_2 = atm + step
-            reason = f"Bearish OI dominance (+{round(bearish_pct, 1)}% Net OI) & Delta {round(pe_delta, 2)} favor fast PUT growth."
+            reason = f"Bearish OI (PCR {round(pcr, 2)}, Net +{round(bearish_pct, 1)}% OI) & Delta {round(pe_delta, 2)} favor fast PUT growth."
 
     return {
         "spot": spot,
@@ -243,9 +261,10 @@ def main():
         vix = 14.0
 
     scrips = get_scrip_master()
+    prev_oi_store = state.setdefault("prev_oi", {})
     results = {}
     for key, cfg in INDICES.items():
-        results[key] = analyze_index(obj, scrips, key, cfg, vix)
+        results[key] = analyze_index(obj, scrips, key, cfg, vix, prev_oi_store)
 
     if not state.get("live_sent"):
         n_spot = round(results["NIFTY"]["spot"], 2)
