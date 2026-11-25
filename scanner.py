@@ -26,8 +26,7 @@ INDICES = {
         "step": 50,
         "target": 110.0,
         "sl": 55.0,
-        "trail_step": 75.0,
-        "min_oi_diff": 250000
+        "trail_step": 75.0
     },
     "SENSEX": {
         "name": "SENSEX",
@@ -38,8 +37,7 @@ INDICES = {
         "step": 100,
         "target": 240.0,
         "sl": 120.0,
-        "trail_step": 175.0,
-        "min_oi_diff": 50000
+        "trail_step": 175.0
     }
 }
 
@@ -134,7 +132,6 @@ def analyze_index(obj, scrips, key, cfg, vix):
     if not exp_dt:
         return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
 
-    # Focus on ATM +/- 2 strikes (highest liquidity & sharpest OI reaction)
     strikes = [atm + i * step for i in range(-2, 3)]
     target_tokens = {}
     for s in scrips:
@@ -164,8 +161,6 @@ def analyze_index(obj, scrips, key, cfg, vix):
     pe_oi_chg = 0.0
     ce_oi_tot = 0.0
     pe_oi_tot = 0.0
-    atm_ce_gain = False
-    atm_pe_gain = False
 
     for item in fetched:
         tok = str(item.get("symbolToken"))
@@ -174,29 +169,27 @@ def analyze_index(obj, scrips, key, cfg, vix):
             continue
         oi = float(item.get("opnInterest", 0) or 0)
         chg = float(item.get("netChangeOpnInterest", 0) or 0)
-        ltp = float(item.get("ltp", 0) or 0)
-        opn = float(item.get("open", 0) or 0)
 
         if info["type"] == "CE":
             ce_oi_tot += oi
             ce_oi_chg += chg
-            if info["strike"] == atm and opn > 0 and ltp > opn:
-                atm_ce_gain = True
         else:
             pe_oi_tot += oi
             pe_oi_chg += chg
-            if info["strike"] == atm and opn > 0 and ltp > opn:
-                atm_pe_gain = True
 
-    pcr = (pe_oi_tot / ce_oi_tot) if ce_oi_tot > 0 else 1.0
+    total_oi = ce_oi_tot + pe_oi_tot
+    if total_oi <= 0:
+        return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
+
     days_left = max((exp_dt - ist_now().date()).days, 0) + 0.5
     t_years = days_left / 365.0
     iv = max(vix / 100.0, 0.12)
 
-    # Pure OI Pressure = Writing on one side + Unwinding on the opposite side
+    # Universal Percentage-Based Net OI Pressure (Works in Gap-Up, Gap-Down & Normal days)
     bullish_oi_net = pe_oi_chg - ce_oi_chg
     bearish_oi_net = ce_oi_chg - pe_oi_chg
-    min_diff = cfg["min_oi_diff"]
+    bullish_pct = (bullish_oi_net / total_oi) * 100.0
+    bearish_pct = (bearish_oi_net / total_oi) * 100.0
 
     signal = None
     oi_bias = "NEUTRAL"
@@ -204,25 +197,25 @@ def analyze_index(obj, scrips, key, cfg, vix):
     strike_1 = atm
     strike_2 = atm
 
-    # 1. Pure Bullish OI (Put Writing + Call Unwinding) + Strong CE Delta
-    if bullish_oi_net >= min_diff and (pe_oi_chg > 0 or ce_oi_chg < 0):
+    # 1. Bullish OI Dominance (>= 5% of total ATM zone OI) + Strong CE Delta
+    if bullish_pct >= 5.0 and (pe_oi_chg > 0 or ce_oi_chg < 0):
         oi_bias = "CALL"
         ce_delta = abs(calc_delta(spot, atm, t_years, iv, "CE"))
-        if ce_delta >= 0.48 and atm_ce_gain:
+        if ce_delta >= 0.45:
             signal = "CALL"
             strike_1 = atm
             strike_2 = atm - step
-            reason = f"Put writing + Call unwinding (Net +{int(bullish_oi_net/1000)}K OI) & Delta {round(ce_delta, 2)} favor fast CALL growth."
+            reason = f"Bullish OI dominance (+{round(bullish_pct, 1)}% Net OI) & Delta {round(ce_delta, 2)} favor fast CALL growth."
 
-    # 2. Pure Bearish OI (Call Writing + Put Unwinding) + Strong PE Delta
-    elif bearish_oi_net >= min_diff and (ce_oi_chg > 0 or pe_oi_chg < 0):
+    # 2. Bearish OI Dominance (>= 5% of total ATM zone OI) + Strong PE Delta
+    elif bearish_pct >= 5.0 and (ce_oi_chg > 0 or pe_oi_chg < 0):
         oi_bias = "PUT"
         pe_delta = abs(calc_delta(spot, atm, t_years, iv, "PE"))
-        if pe_delta >= 0.48 and atm_pe_gain:
+        if pe_delta >= 0.45:
             signal = "PUT"
             strike_1 = atm
             strike_2 = atm + step
-            reason = f"Call writing + Put unwinding (Net +{int(bearish_oi_net/1000)}K OI) & Delta {round(pe_delta, 2)} favor fast PUT growth."
+            reason = f"Bearish OI dominance (+{round(bearish_pct, 1)}% Net OI) & Delta {round(pe_delta, 2)} favor fast PUT growth."
 
     return {
         "spot": spot,
@@ -230,15 +223,13 @@ def analyze_index(obj, scrips, key, cfg, vix):
         "oi_bias": oi_bias,
         "strike_1": strike_1,
         "strike_2": strike_2,
-        "reason": reason,
-        "pcr": pcr
+        "reason": reason
     }
 
 def main():
     now = ist_now()
     mins = now.hour * 60 + now.minute
 
-    # Market hours check: 9:14 AM to 3:25 PM IST
     if mins < (9 * 60 + 14) or mins > (15 * 60 + 25):
         print("Outside market hours:", now)
         return
@@ -257,7 +248,6 @@ def main():
     for key, cfg in INDICES.items():
         results[key] = analyze_index(obj, scrips, key, cfg, vix)
 
-    # 1. Morning BOT LIVE message (once per day)
     if not state.get("live_sent"):
         n_spot = round(results["NIFTY"]["spot"], 2)
         s_spot = round(results["SENSEX"]["spot"], 2)
@@ -268,7 +258,6 @@ def main():
     active = state.setdefault("active_trades", {})
     cooldown = state.setdefault("cooldown_until", {})
 
-    # 2. Check active trades: Instant OI Reversal Exit & Dynamic Trailing Target
     for key in list(active.keys()):
         tr = active.get(key)
         if not isinstance(tr, dict):
@@ -287,7 +276,6 @@ def main():
 
         closed = False
 
-        # A. Check if SL or Trailing SL is hit
         if (side == "CALL" and spot <= sl) or (side == "PUT" and spot >= sl):
             if level == 0:
                 send_tg(
@@ -302,7 +290,6 @@ def main():
                 )
             closed = True
 
-        # B. Instant Exit if OI reverses direction before SL is hit
         elif res["oi_bias"] != "NEUTRAL" and res["oi_bias"] != side:
             send_tg(
                 f"⚠️ OI REVERSAL EXIT — {cfg['name']} {side}\n"
@@ -311,7 +298,6 @@ def main():
             )
             closed = True
 
-        # C. Check if Target Milestone is reached -> Extend Target & Trail SL!
         elif (side == "CALL" and spot >= tgt) or (side == "PUT" and spot <= tgt):
             if res["oi_bias"] != "NEUTRAL" and res["oi_bias"] != side:
                 send_tg(
@@ -346,12 +332,10 @@ def main():
             del active[key]
             cooldown[key] = now_ts + 360
 
-    # 3. Stop taking fresh entries after 3:05 PM IST
     if mins >= (15 * 60 + 5):
         save_state(state)
         return
 
-    # 4. Generate fresh signals independently for NIFTY & SENSEX
     for key, cfg in INDICES.items():
         if key in active:
             continue
