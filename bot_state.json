@@ -2,15 +2,6 @@
   "date": "2026-11-26",
   "live_sent": true,
   "active_trades": {
-    "SENSEX": {
-      "side": "PUT",
-      "strike": "84300 PE",
-      "entry_spot": 84305.18,
-      "target_spot": 84065.2,
-      "sl_spot": 84425.2,
-      "trail_level": 0,
-      "opened_at": 1795677268.8905137
-    },
     "NIFTY": {
       "side": "PUT",
       "strike": "25850 PE",
@@ -22,19 +13,19 @@
     }
   },
   "cooldown_until": {
-    "SENSEX": 1795676543.9850802,
+    "SENSEX": 1795679792.6082535,
     "NIFTY": 1795679305.045347
   },
   "prev_oi": {
     "NIFTY": {
-      "atm": 25850,
-      "ce_tot": 18767905.0,
-      "pe_tot": 20379970.0
+      "atm": 25900,
+      "ce_tot": 28184390.0,
+      "pe_tot": 20842445.0
     },
     "SENSEX": {
       "atm": 84200,
-      "ce_tot": 17221700.0,
-      "pe_tot": 15490800.0
+      "ce_tot": 16297040.0,
+      "pe_tot": 16212560.0
     }
   }
 }
