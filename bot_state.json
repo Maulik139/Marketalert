@@ -1,7 +1,17 @@
 {
   "date": "2026-11-26",
   "live_sent": true,
-  "active_trades": {},
+  "active_trades": {
+    "NIFTY": {
+      "side": "CALL",
+      "strike": "25900 CE",
+      "entry_spot": 25922.95,
+      "target_spot": 26033.0,
+      "sl_spot": 25868.0,
+      "trail_level": 0,
+      "opened_at": 1795676447.2374063
+    }
+  },
   "cooldown_until": {
     "SENSEX": 1795676543.9850802,
     "NIFTY": 1795676313.5612814
@@ -9,13 +19,13 @@
   "prev_oi": {
     "NIFTY": {
       "atm": 25900,
-      "ce_tot": 28643810.0,
-      "pe_tot": 22542065.0
+      "ce_tot": 27915875.0,
+      "pe_tot": 22715810.0
     },
     "SENSEX": {
       "atm": 84400,
-      "ce_tot": 15992400.0,
-      "pe_tot": 13256060.0
+      "ce_tot": 15889600.0,
+      "pe_tot": 13190460.0
     }
   }
 }
