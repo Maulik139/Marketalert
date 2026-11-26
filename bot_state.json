@@ -10,6 +10,15 @@
       "sl_spot": 25894.3,
       "trail_level": 0,
       "opened_at": 1795665015.2606614
+    },
+    "SENSEX": {
+      "side": "PUT",
+      "strike": "83800 PE",
+      "entry_spot": 83814.58,
+      "target_spot": 83574.6,
+      "sl_spot": 83934.6,
+      "trail_level": 0,
+      "opened_at": 1795666479.6029785
     }
   },
   "cooldown_until": {
@@ -18,13 +27,13 @@
   "prev_oi": {
     "NIFTY": {
       "atm": 25750,
-      "ce_tot": 17102995.0,
-      "pe_tot": 19525285.0
+      "ce_tot": 17203355.0,
+      "pe_tot": 19556615.0
     },
     "SENSEX": {
       "atm": 83800,
-      "ce_tot": 4523000.0,
-      "pe_tot": 10059120.0
+      "ce_tot": 5307720.0,
+      "pe_tot": 9399000.0
     }
   }
 }
