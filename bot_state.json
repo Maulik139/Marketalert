@@ -6,9 +6,9 @@
       "side": "CALL",
       "strike": "84000 CE",
       "entry_spot": 84009.55,
-      "target_spot": 84249.6,
-      "sl_spot": 83889.6,
-      "trail_level": 0,
+      "target_spot": 84464.3,
+      "sl_spot": 84009.6,
+      "trail_level": 1,
       "opened_at": 1795683143.572368
     }
   },
@@ -19,13 +19,13 @@
   "prev_oi": {
     "NIFTY": {
       "atm": 25900,
-      "ce_tot": 33595770.0,
-      "pe_tot": 17826770.0
+      "ce_tot": 33287345.0,
+      "pe_tot": 17909840.0
     },
     "SENSEX": {
-      "atm": 84200,
-      "ce_tot": 22470320.0,
-      "pe_tot": 14899340.0
+      "atm": 84300,
+      "ce_tot": 27809300.0,
+      "pe_tot": 9356720.0
     }
   }
 }
