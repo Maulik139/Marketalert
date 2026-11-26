@@ -24,9 +24,9 @@ INDICES = {
         "symbol": "Nifty 50",
         "token": "99926000",
         "step": 50,
-        "target": 110.0,
-        "sl": 55.0,
-        "trail_step": 75.0
+        "target": 120.0,
+        "sl": 60.0,
+        "trail_step": 80.0
     },
     "SENSEX": {
         "name": "SENSEX",
@@ -35,9 +35,9 @@ INDICES = {
         "symbol": "SENSEX",
         "token": "99919000",
         "step": 100,
-        "target": 240.0,
-        "sl": 120.0,
-        "trail_step": 175.0
+        "target": 260.0,
+        "sl": 130.0,
+        "trail_step": 180.0
     }
 }
 
@@ -56,8 +56,8 @@ def load_state():
     default = {
         "date": today_str,
         "live_sent": False,
+        "last_run_ts": 0,
         "active_trades": {},
-        "cooldown_until": {},
         "prev_oi": {}
     }
     if os.path.exists(STATE_FILE):
@@ -71,8 +71,6 @@ def load_state():
                     data["active_trades"] = {
                         k: v for k, v in data["active_trades"].items() if isinstance(v, dict)
                     }
-                if not isinstance(data.get("cooldown_until"), dict):
-                    data["cooldown_until"] = {}
                 if not isinstance(data.get("prev_oi"), dict):
                     data["prev_oi"] = {}
                 return data
@@ -99,12 +97,16 @@ def get_spot(obj, idx_cfg):
 def norm_cdf(x):
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
-def calc_delta(spot, strike, t_years, iv, opt_type):
+def calc_greeks(spot, strike, t_years, iv, opt_type):
     if t_years <= 0 or iv <= 0 or spot <= 0 or strike <= 0:
-        return 0.5 if opt_type == "CE" else -0.5
+        return (0.5 if opt_type == "CE" else -0.5), 0.0
     r = 0.07
-    d1 = (math.log(spot / strike) + (r + 0.5 * iv * iv) * t_years) / (iv * math.sqrt(t_years))
-    return norm_cdf(d1) if opt_type == "CE" else norm_cdf(d1) - 1.0
+    sqrt_t = math.sqrt(t_years)
+    d1 = (math.log(spot / strike) + (r + 0.5 * iv * iv) * t_years) / (iv * sqrt_t)
+    delta = norm_cdf(d1) if opt_type == "CE" else norm_cdf(d1) - 1.0
+    pdf_d1 = math.exp(-0.5 * d1 * d1) / math.sqrt(2.0 * math.pi)
+    gamma = pdf_d1 / (spot * iv * sqrt_t)
+    return delta, gamma
 
 def get_scrip_master():
     url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
@@ -133,7 +135,7 @@ def analyze_index(obj, scrips, key, cfg, vix, prev_oi_store):
     atm = round(spot / step) * step
     exp_dt, exp_str = get_nearest_expiry(scrips, key)
     if not exp_dt:
-        return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
+        return {"spot": spot, "signal": None, "heavy_reversal_to": "NEUTRAL", "t_years": 0.01, "iv": 0.14}
 
     strikes = [atm + i * step for i in range(-2, 3)]
     target_tokens = {}
@@ -150,7 +152,7 @@ def analyze_index(obj, scrips, key, cfg, vix, prev_oi_store):
                     target_tokens[s["token"]] = {"strike": st, "type": otype, "symbol": sym}
 
     if not target_tokens:
-        return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
+        return {"spot": spot, "signal": None, "heavy_reversal_to": "NEUTRAL", "t_years": 0.01, "iv": 0.14}
 
     tokens_list = list(target_tokens.keys())
     try:
@@ -158,7 +160,7 @@ def analyze_index(obj, scrips, key, cfg, vix, prev_oi_store):
         fetched = mkt.get("data", {}).get("fetched", [])
     except Exception as e:
         print(f"MarketData error {key}:", e)
-        return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
+        return {"spot": spot, "signal": None, "heavy_reversal_to": "NEUTRAL", "t_years": 0.01, "iv": 0.14}
 
     ce_oi_tot = 0.0
     pe_oi_tot = 0.0
@@ -182,10 +184,8 @@ def analyze_index(obj, scrips, key, cfg, vix, prev_oi_store):
 
     total_oi = ce_oi_tot + pe_oi_tot
     if total_oi <= 0:
-        print(f"{key}: Total OI is 0 from API")
-        return {"spot": spot, "signal": None, "oi_bias": "NEUTRAL"}
+        return {"spot": spot, "signal": None, "heavy_reversal_to": "NEUTRAL", "t_years": 0.01, "iv": 0.14}
 
-    # Fallback to real-time snapshot diff if Angel API returns 0 for netChangeOpnInterest
     prev = prev_oi_store.get(key, {})
     if ce_oi_chg_api == 0 and pe_oi_chg_api == 0 and prev.get("atm") == atm:
         ce_oi_chg = ce_oi_tot - float(prev.get("ce_tot", ce_oi_tot))
@@ -201,43 +201,47 @@ def analyze_index(obj, scrips, key, cfg, vix, prev_oi_store):
     t_years = days_left / 365.0
     iv = max(vix / 100.0, 0.12)
 
+    ce_delta_raw, _ = calc_greeks(spot, atm, t_years, iv, "CE")
+    pe_delta_raw, _ = calc_greeks(spot, atm, t_years, iv, "PE")
+    ce_delta = abs(ce_delta_raw)
+    pe_delta = abs(pe_delta_raw)
+
     bullish_oi_net = pe_oi_chg - ce_oi_chg
     bearish_oi_net = ce_oi_chg - pe_oi_chg
     bullish_pct = (bullish_oi_net / total_oi) * 100.0
     bearish_pct = (bearish_oi_net / total_oi) * 100.0
 
-    print(f"{key} | Spot: {spot} | PCR: {round(pcr, 2)} | BullNet%: {round(bullish_pct, 2)}% | BearNet%: {round(bearish_pct, 2)}%")
-
     signal = None
-    oi_bias = "NEUTRAL"
+    heavy_reversal_to = "NEUTRAL"
     reason = ""
     strike_1 = atm
     strike_2 = atm
 
-    # 1. Bullish OI: Either strong intraday Put Writing/Call Unwinding (>= 1.2%) OR dominant Live PCR (>= 1.25)
-    if (bullish_pct >= 1.2) or (pcr >= 1.25 and bullish_pct >= 0.3):
-        oi_bias = "CALL"
-        ce_delta = abs(calc_delta(spot, atm, t_years, iv, "CE"))
-        if ce_delta >= 0.45:
-            signal = "CALL"
-            strike_1 = atm
-            strike_2 = atm - step
-            reason = f"Bullish OI (PCR {round(pcr, 2)}, Net +{round(bullish_pct, 1)}% OI) & Delta {round(ce_delta, 2)} favor fast CALL growth."
+    # Heavy opposite OI shift (>= 4.0% Net OI) for True Trend Reversal
+    if bullish_pct >= 4.0 and (pe_oi_chg > 0 or ce_oi_chg < 0):
+        heavy_reversal_to = "CALL"
+    elif bearish_pct >= 4.0 and (ce_oi_chg > 0 or pe_oi_chg < 0):
+        heavy_reversal_to = "PUT"
 
-    # 2. Bearish OI: Either strong intraday Call Writing/Put Unwinding (>= 1.2%) OR dominant Live PCR (<= 0.78)
-    elif (bearish_pct >= 1.2) or (pcr <= 0.78 and bearish_pct >= 0.3):
-        oi_bias = "PUT"
-        pe_delta = abs(calc_delta(spot, atm, t_years, iv, "PE"))
-        if pe_delta >= 0.45:
-            signal = "PUT"
-            strike_1 = atm
-            strike_2 = atm + step
-            reason = f"Bearish OI (PCR {round(pcr, 2)}, Net +{round(bearish_pct, 1)}% OI) & Delta {round(pe_delta, 2)} favor fast PUT growth."
+    # High-Conviction Entry: >= 3.5% Net OI Dominance + Active Direction + Delta >= 0.50
+    if bullish_pct >= 3.5 and (pe_oi_chg > 0 or ce_oi_chg < 0) and ce_delta >= 0.50:
+        signal = "CALL"
+        strike_1 = atm
+        strike_2 = atm - step
+        reason = f"High-conviction Bullish OI (+{round(bullish_pct, 1)}% Net OI, PCR {round(pcr, 2)}) & Delta {round(ce_delta, 2)}."
+
+    elif bearish_pct >= 3.5 and (ce_oi_chg > 0 or pe_oi_chg < 0) and pe_delta >= 0.50:
+        signal = "PUT"
+        strike_1 = atm
+        strike_2 = atm + step
+        reason = f"High-conviction Bearish OI (+{round(bearish_pct, 1)}% Net OI, PCR {round(pcr, 2)}) & Delta {round(pe_delta, 2)}."
 
     return {
         "spot": spot,
         "signal": signal,
-        "oi_bias": oi_bias,
+        "heavy_reversal_to": heavy_reversal_to,
+        "t_years": t_years,
+        "iv": iv,
         "strike_1": strike_1,
         "strike_2": strike_2,
         "reason": reason
@@ -252,6 +256,14 @@ def main():
         return
 
     state = load_state()
+    now_ts = time.time()
+
+    if now_ts - float(state.get("last_run_ts", 0)) < 60:
+        print("Skipping duplicate concurrent run")
+        return
+    state["last_run_ts"] = now_ts
+    save_state(state)
+
     obj = login_angel()
 
     try:
@@ -272,10 +284,9 @@ def main():
         send_tg(f"🟢 BOT LIVE | NIFTY: {n_spot} | SENSEX: {s_spot}")
         state["live_sent"] = True
 
-    now_ts = time.time()
     active = state.setdefault("active_trades", {})
-    cooldown = state.setdefault("cooldown_until", {})
 
+    # Manage Active Trades via SL/Trailing SL AND True Trend Reversal (Heavy OI + Delta Drop)
     for key in list(active.keys()):
         tr = active.get(key)
         if not isinstance(tr, dict):
@@ -290,10 +301,16 @@ def main():
         tgt = tr["target_spot"]
         sl = tr["sl_spot"]
         level = tr.get("trail_level", 0)
+        strike_num = int(tr.get("strike_num", round(entry / cfg["step"]) * cfg["step"]))
         pts = round(spot - entry if side == "CALL" else entry - spot, 1)
+
+        opt_type = "CE" if side == "CALL" else "PE"
+        live_delta_raw, _ = calc_greeks(spot, strike_num, res["t_years"], res["iv"], opt_type)
+        live_delta = abs(live_delta_raw)
 
         closed = False
 
+        # 1. SL or Trailing SL Hit
         if (side == "CALL" and spot <= sl) or (side == "PUT" and spot >= sl):
             if level == 0:
                 send_tg(
@@ -308,56 +325,48 @@ def main():
                 )
             closed = True
 
-        elif res["oi_bias"] != "NEUTRAL" and res["oi_bias"] != side:
+        # 2. True Trend Reversal: Heavy >= 4.0% opposite OI shift AND option Delta dropped < 0.35
+        elif res["heavy_reversal_to"] != "NEUTRAL" and res["heavy_reversal_to"] != side and live_delta < 0.35:
             send_tg(
-                f"⚠️ OI REVERSAL EXIT — {cfg['name']} {side}\n"
+                f"⚠️ TREND REVERSAL EXIT — {cfg['name']} {side}\n"
                 f"Strike: {tr['strike']} | Spot: {round(spot, 2)} ({'+' if pts >= 0 else ''}{pts} pts)\n"
-                f"📉 OI reversed before SL — exit immediately!"
+                f"📉 Heavy opposite OI & Delta dropped ({round(live_delta, 2)}) — exit before SL!"
             )
             closed = True
 
+        # 3. Target Milestone Reached -> Extend Target & Trail SL
         elif (side == "CALL" and spot >= tgt) or (side == "PUT" and spot <= tgt):
-            if res["oi_bias"] != "NEUTRAL" and res["oi_bias"] != side:
-                send_tg(
-                    f"🎯 TARGET HIT & OI EXHAUSTED — Exit {cfg['name']} {side}\n"
-                    f"Strike: {tr['strike']} | Spot: {round(spot, 2)} (+{abs(pts)} pts)\n"
-                    f"💰 Book full profit now!"
-                )
-                closed = True
+            new_level = level + 1
+            step_pts = cfg["trail_step"]
+            if side == "CALL":
+                new_tgt = round(spot + step_pts, 1)
+                new_sl = round(entry, 1) if new_level == 1 else round(spot - step_pts, 1)
             else:
-                new_level = level + 1
-                step_pts = cfg["trail_step"]
-                if side == "CALL":
-                    new_tgt = round(spot + step_pts, 1)
-                    new_sl = round(entry, 1) if new_level == 1 else round(spot - step_pts, 1)
-                else:
-                    new_tgt = round(spot - step_pts, 1)
-                    new_sl = round(entry, 1) if new_level == 1 else round(spot + step_pts, 1)
+                new_tgt = round(spot - step_pts, 1)
+                new_sl = round(entry, 1) if new_level == 1 else round(spot + step_pts, 1)
 
-                tr["trail_level"] = new_level
-                tr["target_spot"] = new_tgt
-                tr["sl_spot"] = new_sl
+            tr["trail_level"] = new_level
+            tr["target_spot"] = new_tgt
+            tr["sl_spot"] = new_sl
 
-                sl_note = "Entry/Cost (Risk-Free!)" if new_level == 1 else f"{new_sl} (Profit Locked!)"
-                send_tg(
-                    f"🔥 TARGET {new_level} HIT — {cfg['name']} {side} (+{abs(pts)} pts)\n"
-                    f"Spot: {round(spot, 2)} | OI still {side} supportive!\n"
-                    f"🚀 Extended Target {new_level + 1}: {new_tgt}\n"
-                    f"🛡️ Trailing SL moved to: {sl_note}"
-                )
+            sl_note = "Entry/Cost (Risk-Free!)" if new_level == 1 else f"{new_sl} (Profit Locked!)"
+            send_tg(
+                f"🔥 TARGET {new_level} HIT — {cfg['name']} {side} (+{abs(pts)} pts)\n"
+                f"Spot: {round(spot, 2)} | Trend riding active!\n"
+                f"🚀 Extended Target {new_level + 1}: {new_tgt}\n"
+                f"🛡️ Trailing SL moved to: {sl_note}"
+            )
 
         if closed:
             del active[key]
-            cooldown[key] = now_ts + 360
 
     if mins >= (15 * 60 + 5):
         save_state(state)
         return
 
+    # Open New Trade whenever high-conviction OI + Greeks align (No daily trade cap)
     for key, cfg in INDICES.items():
         if key in active:
-            continue
-        if now_ts < cooldown.get(key, 0):
             continue
 
         res = results[key]
@@ -390,6 +399,7 @@ def main():
         active[key] = {
             "side": sig,
             "strike": strike_str,
+            "strike_num": res["strike_1"],
             "entry_spot": spot,
             "target_spot": tgt_spot,
             "sl_spot": sl_spot,
