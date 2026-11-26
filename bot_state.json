@@ -1,6 +1,18 @@
 {
-  "date": "2026-11-25",
+  "date": "2026-11-26",
   "live_sent": true,
   "active_trades": {},
-  "cooldown_until": {}
+  "cooldown_until": {},
+  "prev_oi": {
+    "NIFTY": {
+      "atm": 25850,
+      "ce_tot": 13675870.0,
+      "pe_tot": 9259900.0
+    },
+    "SENSEX": {
+      "atm": 84300,
+      "ce_tot": 3695860.0,
+      "pe_tot": 910560.0
+    }
+  }
 }
