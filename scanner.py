@@ -65,14 +65,12 @@ def load_state():
             with open(STATE_FILE, "r") as f:
                 data = json.load(f)
             if isinstance(data, dict) and data.get("date") == today_str:
-                if not isinstance(data.get("active_trades"), dict):
-                    data["active_trades"] = {}
-                else:
-                    data["active_trades"] = {
-                        k: v for k, v in data["active_trades"].items() if isinstance(v, dict)
-                    }
-                if not isinstance(data.get("prev_oi"), dict):
-                    data["prev_oi"] = {}
+                for k in ["active_trades", "prev_oi"]:
+                    if not isinstance(data.get(k), dict):
+                        data[k] = {}
+                data["active_trades"] = {
+                    k: v for k, v in data["active_trades"].items() if isinstance(v, dict)
+                }
                 return data
         except Exception:
             pass
@@ -217,27 +215,24 @@ def analyze_index(obj, scrips, key, cfg, vix, prev_oi_store):
     strike_1 = atm
     strike_2 = atm
 
-    # Heavy opposite OI shift (>= 3.5% Net OI) for True Trend Reversal
-    if bullish_pct >= 3.5 and (pe_oi_chg > 0 or ce_oi_chg < 0):
+    # 100% Pure OI + Greeks Reversal (No price indicators)
+    if bullish_pct >= 3.5 and pe_oi_chg > 0 and ce_oi_chg <= 0:
         heavy_reversal_to = "CALL"
-    elif bearish_pct >= 3.5 and (ce_oi_chg > 0 or pe_oi_chg < 0):
+    elif bearish_pct >= 3.5 and ce_oi_chg > 0 and pe_oi_chg <= 0:
         heavy_reversal_to = "PUT"
 
-    # Entry: Either fresh >= 2.0% Net OI surge OR strong existing OI bias (PCR <= 0.78 / >= 1.25) with live flow + Delta >= 0.48
-    bullish_cond = (bullish_pct >= 2.0) or (pcr >= 1.25 and bullish_pct >= 0.5)
-    bearish_cond = (bearish_pct >= 2.0) or (pcr <= 0.78 and bearish_pct >= 0.5)
-
-    if bullish_cond and (pe_oi_chg > 0 or ce_oi_chg < 0) and ce_delta >= 0.48:
+    # 100% Pure OI + Greeks Entry: Both Total OI (PCR) AND Fresh OI Writing must agree on direction
+    if pcr >= 1.15 and bullish_pct >= 2.0 and pe_oi_chg > ce_oi_chg and ce_delta >= 0.49:
         signal = "CALL"
         strike_1 = atm
         strike_2 = atm - step
-        reason = f"Bullish OI (+{round(bullish_pct, 1)}% Net OI, PCR {round(pcr, 2)}) & Delta {round(ce_delta, 2)}."
+        reason = f"Pure Bullish OI (PCR {round(pcr, 2)}, +{round(bullish_pct, 1)}% Net PE Writing) & Delta {round(ce_delta, 2)}."
 
-    elif bearish_cond and (ce_oi_chg > 0 or pe_oi_chg < 0) and pe_delta >= 0.48:
+    elif pcr <= 0.85 and bearish_pct >= 2.0 and ce_oi_chg > pe_oi_chg and pe_delta >= 0.49:
         signal = "PUT"
         strike_1 = atm
         strike_2 = atm + step
-        reason = f"Bearish OI (+{round(bearish_pct, 1)}% Net OI, PCR {round(pcr, 2)}) & Delta {round(pe_delta, 2)}."
+        reason = f"Pure Bearish OI (PCR {round(pcr, 2)}, +{round(bearish_pct, 1)}% Net CE Writing) & Delta {round(pe_delta, 2)}."
 
     return {
         "spot": spot,
@@ -277,6 +272,7 @@ def main():
 
     scrips = get_scrip_master()
     prev_oi_store = state.setdefault("prev_oi", {})
+
     results = {}
     for key, cfg in INDICES.items():
         results[key] = analyze_index(obj, scrips, key, cfg, vix, prev_oi_store)
@@ -284,7 +280,7 @@ def main():
     if not state.get("live_sent"):
         n_spot = round(results["NIFTY"]["spot"], 2)
         s_spot = round(results["SENSEX"]["spot"], 2)
-        send_tg(f"🟢 BOT LIVE (v2) | NIFTY: {n_spot} | SENSEX: {s_spot}")
+        send_tg(f"🟢 BOT LIVE (Pure OI+Greeks) | NIFTY: {n_spot} | SENSEX: {s_spot}")
         state["live_sent"] = True
 
     active = state.setdefault("active_trades", {})
@@ -330,7 +326,7 @@ def main():
             send_tg(
                 f"⚠️ TREND REVERSAL EXIT — {cfg['name']} {side}\n"
                 f"Strike: {tr['strike']} | Spot: {round(spot, 2)} ({'+' if pts >= 0 else ''}{pts} pts)\n"
-                f"📉 Heavy opposite OI & Delta dropped ({round(live_delta, 2)}) — exit before SL!"
+                f"📉 Pure OI & Delta reversed ({round(live_delta, 2)}) — exit before SL!"
             )
             closed = True
 
@@ -351,7 +347,7 @@ def main():
             sl_note = "Entry/Cost (Risk-Free!)" if new_level == 1 else f"{new_sl} (Profit Locked!)"
             send_tg(
                 f"🔥 TARGET {new_level} HIT — {cfg['name']} {side} (+{abs(pts)} pts)\n"
-                f"Spot: {round(spot, 2)} | Trend riding active!\n"
+                f"Spot: {round(spot, 2)} | Pure OI & Greeks still strong!\n"
                 f"🚀 Extended Target {new_level + 1}: {new_tgt}\n"
                 f"🛡️ Trailing SL moved to: {sl_note}"
             )
