@@ -217,24 +217,27 @@ def analyze_index(obj, scrips, key, cfg, vix, prev_oi_store):
     strike_1 = atm
     strike_2 = atm
 
-    # Heavy opposite OI shift (>= 4.0% Net OI) for True Trend Reversal
-    if bullish_pct >= 4.0 and (pe_oi_chg > 0 or ce_oi_chg < 0):
+    # Heavy opposite OI shift (>= 3.5% Net OI) for True Trend Reversal
+    if bullish_pct >= 3.5 and (pe_oi_chg > 0 or ce_oi_chg < 0):
         heavy_reversal_to = "CALL"
-    elif bearish_pct >= 4.0 and (ce_oi_chg > 0 or pe_oi_chg < 0):
+    elif bearish_pct >= 3.5 and (ce_oi_chg > 0 or pe_oi_chg < 0):
         heavy_reversal_to = "PUT"
 
-    # High-Conviction Entry: >= 3.5% Net OI Dominance + Active Direction + Delta >= 0.50
-    if bullish_pct >= 3.5 and (pe_oi_chg > 0 or ce_oi_chg < 0) and ce_delta >= 0.50:
+    # Entry: Either fresh >= 2.0% Net OI surge OR strong existing OI bias (PCR <= 0.78 / >= 1.25) with live flow + Delta >= 0.48
+    bullish_cond = (bullish_pct >= 2.0) or (pcr >= 1.25 and bullish_pct >= 0.5)
+    bearish_cond = (bearish_pct >= 2.0) or (pcr <= 0.78 and bearish_pct >= 0.5)
+
+    if bullish_cond and (pe_oi_chg > 0 or ce_oi_chg < 0) and ce_delta >= 0.48:
         signal = "CALL"
         strike_1 = atm
         strike_2 = atm - step
-        reason = f"High-conviction Bullish OI (+{round(bullish_pct, 1)}% Net OI, PCR {round(pcr, 2)}) & Delta {round(ce_delta, 2)}."
+        reason = f"Bullish OI (+{round(bullish_pct, 1)}% Net OI, PCR {round(pcr, 2)}) & Delta {round(ce_delta, 2)}."
 
-    elif bearish_pct >= 3.5 and (ce_oi_chg > 0 or pe_oi_chg < 0) and pe_delta >= 0.50:
+    elif bearish_cond and (ce_oi_chg > 0 or pe_oi_chg < 0) and pe_delta >= 0.48:
         signal = "PUT"
         strike_1 = atm
         strike_2 = atm + step
-        reason = f"High-conviction Bearish OI (+{round(bearish_pct, 1)}% Net OI, PCR {round(pcr, 2)}) & Delta {round(pe_delta, 2)}."
+        reason = f"Bearish OI (+{round(bearish_pct, 1)}% Net OI, PCR {round(pcr, 2)}) & Delta {round(pe_delta, 2)}."
 
     return {
         "spot": spot,
@@ -281,12 +284,11 @@ def main():
     if not state.get("live_sent"):
         n_spot = round(results["NIFTY"]["spot"], 2)
         s_spot = round(results["SENSEX"]["spot"], 2)
-        send_tg(f"🟢 BOT LIVE | NIFTY: {n_spot} | SENSEX: {s_spot}")
+        send_tg(f"🟢 BOT LIVE (v2) | NIFTY: {n_spot} | SENSEX: {s_spot}")
         state["live_sent"] = True
 
     active = state.setdefault("active_trades", {})
 
-    # Manage Active Trades via SL/Trailing SL AND True Trend Reversal (Heavy OI + Delta Drop)
     for key in list(active.keys()):
         tr = active.get(key)
         if not isinstance(tr, dict):
@@ -310,7 +312,6 @@ def main():
 
         closed = False
 
-        # 1. SL or Trailing SL Hit
         if (side == "CALL" and spot <= sl) or (side == "PUT" and spot >= sl):
             if level == 0:
                 send_tg(
@@ -325,7 +326,6 @@ def main():
                 )
             closed = True
 
-        # 2. True Trend Reversal: Heavy >= 4.0% opposite OI shift AND option Delta dropped < 0.35
         elif res["heavy_reversal_to"] != "NEUTRAL" and res["heavy_reversal_to"] != side and live_delta < 0.35:
             send_tg(
                 f"⚠️ TREND REVERSAL EXIT — {cfg['name']} {side}\n"
@@ -334,7 +334,6 @@ def main():
             )
             closed = True
 
-        # 3. Target Milestone Reached -> Extend Target & Trail SL
         elif (side == "CALL" and spot >= tgt) or (side == "PUT" and spot <= tgt):
             new_level = level + 1
             step_pts = cfg["trail_step"]
@@ -364,7 +363,6 @@ def main():
         save_state(state)
         return
 
-    # Open New Trade whenever high-conviction OI + Greeks align (No daily trade cap)
     for key, cfg in INDICES.items():
         if key in active:
             continue
