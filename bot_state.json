@@ -1,7 +1,7 @@
 {
   "date": "2026-11-27",
   "live_sent": true,
-  "last_run_ts": 1795760064.0785992,
+  "last_run_ts": 1795760178.072876,
   "active_trades": {
     "NIFTY": {
       "side": "CALL",
@@ -12,18 +12,28 @@
       "sl_spot": 25635.8,
       "trail_level": 0,
       "opened_at": 1795759944.7872038
+    },
+    "SENSEX": {
+      "side": "CALL",
+      "strike": "83600 CE",
+      "strike_num": 83600,
+      "entry_spot": 83627.03,
+      "target_spot": 83887.0,
+      "sl_spot": 83497.0,
+      "trail_level": 0,
+      "opened_at": 1795760178.072876
     }
   },
   "prev_oi": {
     "NIFTY": {
       "atm": 25700,
-      "ce_tot": 32103305.0,
-      "pe_tot": 35154535.0
+      "ce_tot": 32622785.0,
+      "pe_tot": 35451260.0
     },
     "SENSEX": {
       "atm": 83600,
-      "ce_tot": 709860.0,
-      "pe_tot": 948820.0
+      "ce_tot": 726880.0,
+      "pe_tot": 989400.0
     }
   }
 }
