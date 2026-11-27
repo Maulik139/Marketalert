@@ -1,7 +1,7 @@
 {
   "date": "2026-11-27",
   "live_sent": true,
-  "last_run_ts": 1795754774.375622,
+  "last_run_ts": 1795754899.2507513,
   "active_trades": {},
   "prev_oi": {
     "NIFTY": {
@@ -11,8 +11,8 @@
     },
     "SENSEX": {
       "atm": 84100,
-      "ce_tot": 1781820.0,
-      "pe_tot": 1681920.0
+      "ce_tot": 1774180.0,
+      "pe_tot": 1725820.0
     }
   }
 }
